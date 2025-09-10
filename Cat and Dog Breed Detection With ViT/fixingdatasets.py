@@ -1,0 +1,103 @@
+import re
+import os
+import shutil
+
+
+"""  To get breeds name
+
+# Path to the images folder
+images_path = r"oxford_pet_data\images"
+
+# Get all filenames in the directory
+all_files = os.listdir(images_path)
+
+# Extract unique class names from filenames (before the last underscore)
+class_names = set()
+for file in all_files:
+    if file.endswith(".jpg"):
+        class_name = "_".join(file.split("_")[:-1])  # Removes the last part (usually a number)
+        class_names.add(class_name)
+
+# Sort the class names
+class_names = sorted(class_names)
+
+# Save to a text file
+output_file = os.path.join(images_path, "class_names.txt")
+with open(output_file, 'w') as f:
+    for cls in class_names:
+        f.write(cls)
+
+print(f"Saved {len(class_names)} class names to {output_file}")
+
+
+"""
+
+
+def oxforddatasetrename():
+# Directory containing all images
+    base_dir = r"images\images"
+
+# List of breeds (folder names) from your description
+    breeds = [
+    "Abyssinian", "Bengal", "Birman", "Bombay", "British_Shorthair",
+    "Egyptian_Mau", "Maine_Coon", "Persian", "Ragdoll", "Russian_Blue",
+    "Siamese", "Sphynx", "american_bulldog", "american_pit_bull_terrier",
+    "basset_hound", "beagle", "boxer", "chihuahua", "english_cocker_spaniel",
+    "english_setter", "german_shorthaired", "great_pyrenees", "havanese",
+    "japanese_chin", "keeshond", "leonberger", "miniature_pinscher",
+    "newfoundland", "pomeranian", "pug", "saint_bernard", "samoyed",
+    "scottish_terrier", "shiba_inu", "staffordshire_bull_terrier",
+    "wheaten_terrier", "yorkshire_terrier"
+    ]
+
+# Convert breed names to lowercase
+    breeds = [breed.lower() for breed in breeds]
+
+# Process each file in the images directory
+    for filename in os.listdir(base_dir):
+        if filename.lower().endswith(".jpg"):
+        # Identify breed name prefix from the filename
+            for breed in breeds:
+             if filename.lower().startswith(breed):
+                breed_folder = os.path.join(base_dir, breed)
+
+                # Create breed folder if not exists
+                os.makedirs(breed_folder, exist_ok=True)
+
+                # Move file to the appropriate folder
+                src_path = os.path.join(base_dir, filename)
+                dst_path = os.path.join(breed_folder, filename)
+
+                shutil.move(src_path, dst_path)
+                break  # Found the breed, no need to check others
+
+def standforddatasetrename():
+# Path to your dataset
+    base_dir = r"stanford\Images"
+
+# Loop through all subfolders
+    for folder in os.listdir(base_dir):
+        old_folder_path = os.path.join(base_dir, folder)
+
+    # Make sure it's a directory and follows the expected pattern
+        if os.path.isdir(old_folder_path) and '-' in folder:
+        # Extract class name and make it lowercase
+            new_folder_name = folder.split('-')[1].lower()
+            new_folder_path = os.path.join(base_dir, new_folder_name)
+
+        # Rename the folder
+            os.rename(old_folder_path, new_folder_path)
+
+        # Loop through all images inside this folder
+            for filename in os.listdir(new_folder_path):
+                file_path = os.path.join(new_folder_path, filename)
+
+            # Check if it's a file and matches pattern like: n02085620_7.jpg
+                match = re.match(r'^.+?_(\d+)\.jpg$', filename)
+                if match:
+                    number = match.group(1)
+                    new_filename = f"{new_folder_name}_40{number}.jpg"
+                    new_file_path = os.path.join(new_folder_path, new_filename)
+                # Rename the image
+                    os.rename(file_path, new_file_path)
+

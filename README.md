@@ -30,8 +30,6 @@ We leveraged **transfer learning** by fine-tuning the EfficientNetB0 model, know
 - Data augmentation layers (rotation, flip, zoom)
 - Vision Transformer (ViT) base (pre-trained on ImageNet)
 - Global average pooling
-- Dense layers with Dropout
-- Final softmax classification layer
 
 ---
 

@@ -24,7 +24,7 @@ from transformers import (
     EarlyStoppingCallback,
 )
 import evaluate
-from visualize_and_equalize_class_distribution import (
+from optimized_V_and_E_Class_distribution import (
     equalize_class_distribution,
     get_basic_augmentation,
 )
@@ -282,7 +282,12 @@ def Model_with_freeze_unfreeze(
         model_name,
         num_labels=num_classes,
         ignore_mismatched_sizes=True,
+        trust_remote_code=True,  # 👈 ADD THIS LINE
     ).to(device)
+
+    print("Model type:", type(final_model))
+    # Print top-level attributes for debugging
+    print("Top-level attributes:", [a for a in dir(final_model) if not a.startswith("_")][:80])
 
     final_collator = MixupCollator(
         mixup_alpha=best_params["mixup_alpha"],
@@ -294,18 +299,115 @@ def Model_with_freeze_unfreeze(
     # -----------------------------
     print(f"\n🧊 Phase 1: Training classifier head only for {warmup_epochs} epochs")
 
-    # ✅ REPLACE the backbone freezing logic:
     def freeze_backbone(model, freeze=True):
-        backbone_attrs = ["vit", "swin", "convnext", "deit", "efficientnet"]
+        """
+        Robust backbone freeze/unfreeze helper.
+
+        Strategy:
+        1. Try known HF backbone attributes (vit, swin, convnext, deit, efficientnet, resnet).
+        2. Try common timm-wrapper attribute names (model, timm_model, backbone, base_model, model_vision).
+        3. If still not found, scan named_modules() for a classifier-like module and unfreeze only it when freeze=True.
+        4. If nothing matches, fallback to freezing/unfreezing all params (with an explanatory message).
+        """
+        backbone_attrs = ["vit", "swin", "convnext", "deit", "efficientnet", "resnet"]
         for name in backbone_attrs:
             if hasattr(model, name):
                 backbone = getattr(model, name)
                 for param in backbone.parameters():
                     param.requires_grad = not freeze
-                print(f"{'Frozen' if freeze else 'Unfrozen'}: {name}")
+                print(f"{'Frozen' if freeze else 'Unfrozen'} backbone: {name} (HF attribute)")
                 return True
-        return False
 
+        # Common wrapper attribute names that may hold the timm model
+        candidate_attrs = ["model", "timm_model", "backbone", "base_model", "model_vision", "body", "encoder"]
+        for attr in candidate_attrs:
+            if hasattr(model, attr):
+                candidate = getattr(model, attr)
+                # If candidate exposes get_classifier(), treat it as timm-like
+                try:
+                    if hasattr(candidate, "get_classifier") or hasattr(candidate, "classifier") or hasattr(candidate,
+                                                                                                           "head") or hasattr(
+                            candidate, "fc"):
+                        if freeze:
+                            # freeze all first
+                            for p in model.parameters():
+                                p.requires_grad = False
+                            # unfreeze the classifier only
+                            try:
+                                # Prefer using get_classifier() if available
+                                if hasattr(candidate, "get_classifier"):
+                                    classifier = candidate.get_classifier()
+                                elif hasattr(candidate, "classifier"):
+                                    classifier = candidate.classifier
+                                elif hasattr(candidate, "head"):
+                                    classifier = candidate.head
+                                elif hasattr(candidate, "fc"):
+                                    classifier = candidate.fc
+                                else:
+                                    classifier = None
+
+                                if classifier is not None:
+                                    for p in classifier.parameters():
+                                        p.requires_grad = True
+                                    print(f"Unfrozen classifier head found on attribute '{attr}'")
+                                    return True
+                                else:
+                                    # Could not locate classifier object, fallback to unfreeze all
+                                    for p in model.parameters():
+                                        p.requires_grad = True
+                                    print(
+                                        f"⚠️ Could not extract classifier module from attribute '{attr}'. Unfrozen all params.")
+                                    return True
+                            except Exception as e:
+                                print(f"⚠️ Error while unfreezing classifier at attr '{attr}': {e}. Unfreezing all.")
+                                for p in model.parameters():
+                                    p.requires_grad = True
+                                return True
+                        else:
+                            # unfreeze everything for phase 2
+                            for p in model.parameters():
+                                p.requires_grad = True
+                            print(f"Unfrozen all layers (via '{attr}')")
+                            return True
+                except Exception as e:
+                    print(f"⚠️ Checking attr '{attr}' raised: {e}")
+
+        # Last-resort: scan modules and try to detect a classifier module by heuristics
+        classifier_candidates = []
+        for name, module in model.named_modules():
+            if name == "":
+                continue
+            # Heuristic checks
+            if hasattr(module, "get_classifier"):  # timm style
+                classifier_candidates.append((name, module))
+            elif any(hasattr(module, a) for a in ("classifier", "head", "fc")):
+                classifier_candidates.append((name, module))
+
+        if classifier_candidates:
+            # Pick the most-final looking candidate (the longest name usually)
+            classifier_candidates.sort(key=lambda x: len(x[0]), reverse=True)
+            cls_name, cls_module = classifier_candidates[0]
+            print(f"Detected classifier candidate: '{cls_name}' -> {type(cls_module)}")
+            if freeze:
+                # freeze all then unfreeze classifier
+                for p in model.parameters():
+                    p.requires_grad = False
+                for p in cls_module.parameters():
+                    p.requires_grad = True
+                print(f"Unfrozen classifier module '{cls_name}' (heuristic)")
+            else:
+                for p in model.parameters():
+                    p.requires_grad = True
+                print("Unfrozen all layers (heuristic path)")
+            return True
+
+        # Fallback: could not find specific backbone/classifier. Inform and return False
+        print("⚠️ Could not find a known backbone/classifier to selectively freeze/unfreeze.")
+        print(f"   Model type: {type(model)}")
+        print("   As a safe fallback, freezing/unfreezing all model params.")
+        for p in model.parameters():
+            p.requires_grad = not freeze
+        return False
 
     warmup_args = TrainingArguments(
         output_dir=os.path.join(save_dir, "final_model_warmup"),

@@ -1,6 +1,7 @@
 import torch
 from training_model_withloaddata import Model_with_freeze_unfreeze
 
+
 # ============================================================
 # 🚀 Helper to run a single model
 # ============================================================
@@ -22,7 +23,7 @@ def run_model(tag, cfg):
         batch_size=cfg["batch_size"],
         weight_decay=cfg["weight_decay"],
         default_mixup_alpha=cfg["mixup_alpha"],
-        num_train_epochs =cfg["num_train_epochs"],
+        num_train_epochs=cfg["num_train_epochs"],
         warmup_epochs=cfg["warmup_epochs"],
         fp16=True,
         metric_for_best_model="eval_accuracy",
@@ -37,25 +38,58 @@ def run_model(tag, cfg):
 # ⚙️ Best Known Hyperparameters (from tuning)
 # ============================================================
 best_configs = {
+    # --- Models ---
+    "ResNet18": {
+        "model_name": "microsoft/resnet-18",
+        "save_dir": "saved_model/ResNet18",
+        "learning_rate": 1e-4,
+        "batch_size": 16, 
+        "weight_decay": 0.01,
+        "mixup_alpha": 0.2,
+        "num_train_epochs": 15,
+        "warmup_epochs": 4,
+    },
+    "ResNet50v1.5": {
+        "model_name": "microsoft/resnet-50",
+        "save_dir": "saved_model/ResNet50v1.5",
+        "learning_rate": 1e-4,
+        "batch_size": 12,
+        "weight_decay": 0.01,
+        "mixup_alpha": 0.2,
+        "num_train_epochs": 15,
+        "warmup_epochs": 4,
+    },
+
+    "ResNetV2-timm": {
+        "model_name": "timm/resnetv2_50.a1h_in1k",
+        "save_dir": "saved_model/ResNetV2-timm",
+        "learning_rate": 1e-4,
+        "batch_size": 12,
+        "weight_decay": 0.01,
+        "mixup_alpha": 0.2,
+        "num_train_epochs": 15,
+        "warmup_epochs": 4,
+    },
+
     "ViT": {
         "model_name": "google/vit-base-patch16-224-in21k",
         "save_dir": "saved_model/ViT",
-        "learning_rate": 5e-5,  # ⬇️ More conservative
-        "batch_size": 8,  # Smaller for ViT
-        "weight_decay": 0.06,  # ⬆️ Stronger regularization
-        "mixup_alpha": 0.25,  # More conservative
+        "learning_rate": 5e-5,
+        "batch_size": 8,
+        "weight_decay": 0.06,
+        "mixup_alpha": 0.25,
         "num_train_epochs": 12,
         "warmup_epochs": 4,
     },
     "EfficientNet": {
         "model_name": "google/efficientnet-b0",
         "save_dir": "saved_model/EfficientNet",
-        "learning_rate": 1e-4,      # ⬇️ Reduced from 3e-4
-        "batch_size": 16,           # ⬆️ Add explicit batch size
-        "weight_decay": 0.01,       # ⬆️ Increased regularization
-        "mixup_alpha": 0.2,         # ⬇️ Reduced
-        "num_train_epochs": 15,     # More epochs needed
-        "warmup_epochs": 4,         # Explicit warmup
+        "learning_rate": 1e-4,
+        "batch_size": 16,
+        "weight_decay": 0.01,
+        "mixup_alpha": 0.2,
+        "num_train_epochs": 15,
+        "warmup_epochs": 4,
     },
     "Swin": {
         "model_name": "microsoft/swin-base-patch4-window7-224",
@@ -79,13 +113,14 @@ best_configs = {
     },
 }
 
-
 # ============================================================
 # 🏁 Run All Models
 # ============================================================
 if __name__ == "__main__":
     results = {}
-    for tag, cfg in best_configs.items():
+    models_to_run = best_configs
+
+    for tag, cfg in models_to_run.items():
         results[tag] = run_model(tag, cfg)
 
     print("\n==============================")

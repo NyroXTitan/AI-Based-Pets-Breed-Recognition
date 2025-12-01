@@ -15,14 +15,16 @@ def run_model(tag, cfg):
 
     out = Model_with_freeze_unfreeze(
         train_dir="ima/train",
+        val_dir="ima/val",
         save_dir=cfg["save_dir"],
         model_name=cfg["model_name"],
         target_count=200,
-        mixup_enabled=True,
+        mix_augment_enabled=True,
         learning_rate=cfg["learning_rate"],
         batch_size=cfg["batch_size"],
         weight_decay=cfg["weight_decay"],
-        default_mixup_alpha=cfg["mixup_alpha"],
+        mixup_alpha=cfg["mixup_alpha"],
+        cutmix_alpha=cfg["cutmix_alpha"],
         num_train_epochs=cfg["num_train_epochs"],
         warmup_epochs=cfg["warmup_epochs"],
         fp16=True,
@@ -35,17 +37,17 @@ def run_model(tag, cfg):
 
 
 # ============================================================
-# ⚙️ Best Known Hyperparameters (from tuning)
+# ⚙ Best Known Hyperparameters (from tuning)
 # ============================================================
 best_configs = {
-    # --- Models ---
     "ResNet18": {
         "model_name": "microsoft/resnet-18",
         "save_dir": "saved_model/ResNet18",
         "learning_rate": 1e-4,
-        "batch_size": 16, 
+        "batch_size": 16,
         "weight_decay": 0.01,
         "mixup_alpha": 0.2,
+        "cutmix_alpha": 1.0,
         "num_train_epochs": 15,
         "warmup_epochs": 4,
     },
@@ -56,17 +58,7 @@ best_configs = {
         "batch_size": 12,
         "weight_decay": 0.01,
         "mixup_alpha": 0.2,
-        "num_train_epochs": 15,
-        "warmup_epochs": 4,
-    },
-
-    "ResNetV2-timm": {
-        "model_name": "timm/resnetv2_50.a1h_in1k",
-        "save_dir": "saved_model/ResNetV2-timm",
-        "learning_rate": 1e-4,
-        "batch_size": 12,
-        "weight_decay": 0.01,
-        "mixup_alpha": 0.2,
+        "cutmix_alpha": 1.0,
         "num_train_epochs": 15,
         "warmup_epochs": 4,
     },
@@ -78,6 +70,7 @@ best_configs = {
         "batch_size": 8,
         "weight_decay": 0.06,
         "mixup_alpha": 0.25,
+        "cutmix_alpha": 1.0,
         "num_train_epochs": 12,
         "warmup_epochs": 4,
     },
@@ -88,6 +81,7 @@ best_configs = {
         "batch_size": 16,
         "weight_decay": 0.01,
         "mixup_alpha": 0.2,
+        "cutmix_alpha": 1.0,
         "num_train_epochs": 15,
         "warmup_epochs": 4,
     },
@@ -98,7 +92,8 @@ best_configs = {
         "batch_size": 12,
         "weight_decay": 0.05,
         "mixup_alpha": 0.25,
-        "num_train_epochs": 12,
+        "cutmix_alpha": 1.0,
+        "num_train_epochs": 15,
         "warmup_epochs": 4,
     },
     "ConvNeXt": {
@@ -108,10 +103,12 @@ best_configs = {
         "batch_size": 8,
         "weight_decay": 0.05,
         "mixup_alpha": 0.2,
-        "num_train_epochs": 12,
+        "cutmix_alpha": 1.0,
+        "num_train_epochs": 15,
         "warmup_epochs": 4,
     },
 }
+
 
 # ============================================================
 # 🏁 Run All Models

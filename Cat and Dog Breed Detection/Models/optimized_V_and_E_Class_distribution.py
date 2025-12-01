@@ -1,4 +1,3 @@
-# visualize_and_equalize_class_distribution.py (Optimized)
 import matplotlib.pyplot as plt
 from collections import Counter
 from torchvision import transforms
@@ -9,10 +8,7 @@ import torch
 import numpy as np
 from PIL import Image
 
-# 🚀 --- NEW: Import Albumentations ---
 import albumentations as A
-from albumentations.pytorch import ToTensorV2
-# ----------------------------------
 
 
 # ---------------------------
@@ -48,10 +44,78 @@ def get_basic_augmentation(size=(224, 224)):
     ])
 
 
+
+# ============================================================
+# 🧰 MixUp + CutMix Collator
+# ============================================================
+class MixupCutmixCollator:
+    def __init__(
+        self,
+        mixup_alpha: float = 0.0,
+        cutmix_alpha: float = 0.0,
+        p_mixup: float = 0.0,
+        p_cutmix: float = 0.0,
+        enabled: bool = False,
+        device: torch.device | None = 'cpu',
+    ):
+        """
+        MixUp + CutMix combo collator.
+
+        - If enabled=False -> no mixing, plain batch.
+        - If both alphas <= 0 -> no mixing.
+        - With probabilities p_mixup / p_cutmix it chooses which augmentation to apply.
+        - Uses mixup_images_labels / cutmix_images_labels from optimized_V_and_E file.
+        """
+        self.mixup_alpha = mixup_alpha
+        self.cutmix_alpha = cutmix_alpha
+        self.p_mixup = p_mixup
+        self.p_cutmix = p_cutmix
+        self.enabled = enabled
+        self.device = device  # can be set from training code
+
+    def __call__(self, features):
+        pixel_values = torch.stack([f["pixel_values"] for f in features])
+        labels = torch.stack([f["labels"] for f in features])
+
+        # No mixing conditions
+        if (not self.enabled) or (self.mixup_alpha <= 0 and self.cutmix_alpha <= 0):
+            return {
+                "pixel_values": pixel_values,
+                "labels": labels,
+            }
+
+        r = random.random()
+
+        # Decide which augmentation to apply
+        if r < self.p_mixup and self.mixup_alpha > 0:
+
+            mixed_x, y_a, y_b, lam = mixup_images_labels(
+                pixel_values, labels, alpha=self.mixup_alpha
+            )
+        elif r < self.p_mixup + self.p_cutmix and self.cutmix_alpha > 0:
+
+            mixed_x, y_a, y_b, lam = cutmix_images_labels(
+                pixel_values, labels, alpha=self.cutmix_alpha
+            )
+        else:
+            # No mixing for this batch
+            return {
+                "pixel_values": pixel_values,
+                "labels": labels,
+            }
+
+        return {
+            "pixel_values": mixed_x,
+            "y_a": y_a,
+            "y_b": y_b,
+            "lam": lam,
+            "labels": y_a,  # for eval compatibility in compute_metrics
+        }
+
 # ---------------------------
 # MixUp & CutMix helpers
 # ---------------------------
-def mixup_images_labels(x, y, alpha=0.4, device='cpu'):
+def mixup_images_labels(x, y, alpha=0.4, device: torch.device | None = 'cpu',):
     """
     x: tensor (B, C, H, W)
     y: tensor (B,) long labels
@@ -61,7 +125,7 @@ def mixup_images_labels(x, y, alpha=0.4, device='cpu'):
     or you can call mixup_criterion which I also provide below.
     """
     if alpha <= 0:
-        return x, y, 1.0, y, y
+        return x, y, y, 1.0
 
     lam = np.random.beta(alpha, alpha)
     batch_size = x.size(0)
@@ -116,7 +180,7 @@ def cutmix_images_labels(x, y, alpha=1.0, device='cpu'):
 # ---------------------------
 import torch.nn.functional as F
 
-def mixup_criterion(logits, y_a, y_b, lam, num_classes, device='cpu'):
+def mixup_criterion(logits, y_a, y_b, lam, num_classes, device='cuda'):
     """
     Compute loss for mixup with soft labels.
     logits: (B, C)

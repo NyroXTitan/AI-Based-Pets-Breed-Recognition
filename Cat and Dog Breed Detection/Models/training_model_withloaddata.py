@@ -1,4 +1,3 @@
-
 import os
 import json
 import random
@@ -22,7 +21,7 @@ from transformers import (
     TrainingArguments,
     EarlyStoppingCallback,
 )
-from visualize_and_equalize_class_distribution import (
+from optimized_V_and_E_Class_distribution import (
     equalize_class_distribution,
     get_basic_augmentation,
     MixupCutmixCollator,
@@ -500,3 +499,4 @@ def Model_with_freeze_unfreeze(
                 os.remove(os.path.join(root, f))
 
     return meta
+

@@ -20,8 +20,9 @@ def main():
     merge_datasets(dataset1, dataset2, output_dir)
     print("✅ Merge complete! Images saved in:", output_dir)
 
-    print('\n\n Spliting Datasets For Training and Testing 80/20')
-    split_dataset_into_train_val("merged_dataset", "images_split", val_ratio=0.2)
+    print('\n\n Spliting Datasets For Training and Testing 70/10/20')
+    split_dataset_into_train_val("ima/Images", "ima", train_ratio=0.7, val_ratio=0.1, test_ratio=0.2)
 
 if __name__ == "__main__":
     main()
+

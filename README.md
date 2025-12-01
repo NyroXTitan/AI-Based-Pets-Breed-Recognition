@@ -44,24 +44,28 @@ This project utilizes two high-quality datasets:
 ### Combined Dataset Statistics
 - **Total Classes**: 142 unique breeds
 - **Total Images**: ~27,929 images
-- **Train/Validation Split**: 80/20 ratio
+- **Train/Validation/Test Split**: 70/10/20 ratio
 - **Class Balancing**: Equalized to 200 samples per class (where available)
 
-## 🧠 Model Architecture
+## 🧠 Model Architectures
 
-### Vision Transformer (ViT)
-- **Base Model**: `google/vit-base-patch16-224-in21k`
-- **Input Size**: 224×224 pixels
-- **Patch Size**: 16×16 patches
-- **Pre-training**: ImageNet-21k
-- **Fine-tuning**: Custom pet breed dataset
+The project supports multiple state-of-the-art vision models:
+
+### Supported Models
+1. **ResNet18** - `microsoft/resnet-18`
+2. **ResNet50** - `microsoft/resnet-50`
+3. **Vision Transformer (ViT)** - `google/vit-base-patch16-224-in21k`
+4. **EfficientNet-B0** - `google/efficientnet-b0`
+5. **Swin Transformer** - `microsoft/swin-base-patch4-window7-224`
+6. **ConvNeXt** - `facebook/convnext-base-224-22k`
 
 ### Key Components
-1. **Image Preprocessing**: Resize to 224×224, RGB conversion
-2. **Patch Embedding**: 16×16 patch extraction
-3. **Transformer Encoder**: 12 layers with multi-head attention
-4. **Classification Head**: Custom head for 142 breed classes
-5. **Data Augmentation**: Rotation, flip, zoom transformations
+1. **Image Preprocessing**: Resize to 224×224, RGB conversion, EXIF correction
+2. **Data Augmentation**: Albumentations (RandomResizedCrop, HorizontalFlip, Rotation, ColorJitter)
+3. **Advanced Augmentation**: MixUp and CutMix for regularization
+4. **Class Balancing**: Equalized to 200 samples per class
+5. **Two-Phase Training**: Freeze/unfreeze strategy for stable fine-tuning
+6. **Classification Head**: Custom head for 142 breed classes
 
 ## 🚀 Installation
 
@@ -80,7 +84,7 @@ cd AI-Based-Pets-Breed-Recognition
 
 2. **Install dependencies**
 ```bash
-cd "Cat and Dog Breed Detection With ViT"
+cd "Cat and Dog Breed Detection"
 pip install -r requirements.txt
 ```
 
@@ -93,27 +97,34 @@ opencv-python==4.12.0.88
 pillow==11.2.1
 scikit-learn==1.6.1
 matplotlib==3.10.3
+albumentations (for fast augmentation)
+accelerate==1.7.0
+datasets==3.6.0
 ```
+
+**Note:** See `requirements.txt` for complete dependency list.
 
 ## 📁 Project Structure
 
 ```
 AI-Based-Pets-Breed-Recognition/
-├── Cat and Dog Breed Detection With ViT/
+├── Cat and Dog Breed Detection/
 │   ├── main.py                           # Main data processing pipeline
-│   ├── Training_Vit.py                   # ViT model training
-│   ├── predict.py                        # Breed prediction script
-│   ├── Evaluating.py                     # Model evaluation
 │   ├── data_loader.py                    # Dataset extraction utilities
+│   ├── fixingdatasets.py                 # Dataset renaming and organization
 │   ├── combiningbothdatasets.py          # Dataset merging
-│   ├── fixingdatasets.py                 # Dataset preprocessing
-│   ├── split.py                          # Train/validation splitting
-│   ├── visualize_and_equalize_class_distribution.py  # Class balancing
+│   ├── split.py                          # Train/validation/test splitting
+│   ├── model_names.txt                   # Supported model configurations
 │   ├── requirements.txt                  # Python dependencies
+│   ├── Models/
+│   │   ├── Models.py                     # Model runner and configurations
+│   │   ├── training_model_withloaddata.py # Main training script
+│   │   └── optimized_V_and_E_Class_distribution.py  # Class balancing & augmentation
 │   └── saved_model/                      # Trained model storage
-│       ├── vit_transformer/              # ViT model files
+│       ├── {ModelName}/                  # Model-specific directories
 │       └── trainlabel_mapping.json       # Class label mapping
-└── README.md
+├── README.md                             # Project documentation
+└── report.md                             # Technical preprocessing report
 ```
 
 ## 🔄 Training Process
@@ -129,106 +140,91 @@ This will:
 - Extract Stanford Dogs and Oxford-IIIT datasets
 - Fix folder structure and naming conventions
 - Merge both datasets into a unified structure
-- Split into train/validation sets (80/20)
-- Balance class distributions
+- Split into train/validation/test sets (70/10/20)
+- Balance class distributions (200 samples per class)
 
 ### 2. Model Training
-Train the Vision Transformer:
+Train any of the supported models:
 
 ```bash
-python Training_Vit.py
+cd Models
+python Models.py
 ```
+
+Or train a specific model by modifying `Models.py` to select which models to run.
 
 **Training Configuration:**
-- **Epochs**: 3
-- **Batch Size**: 16
-- **Learning Rate**: Default ViT settings
+- **Epochs**: 12-15 (model-dependent)
+- **Batch Size**: 8-16 (model-dependent)
+- **Learning Rate**: 1e-5 to 1e-4 (model-dependent)
 - **Device**: Auto-detect (CUDA/CPU)
 - **Class Balancing**: 200 samples per class
+- **Augmentation**: MixUp + CutMix enabled
+- **Training Strategy**: Two-phase (freeze/unfreeze)
 
 ### 3. Model Evaluation
-Evaluate the trained model:
+Model evaluation is performed automatically during training. Detailed metrics are saved after each epoch in the model's save directory:
 
-```bash
-python Evaluating.py
-```
+- **Accuracy**
+- **Precision** (weighted average)
+- **Recall** (weighted average)
+- **F1-Score** (weighted average)
+- **Classification Report** (per-class metrics)
+- **Confusion Matrix**
 
-**Metrics Provided:**
-- Accuracy
-- Precision (weighted average)
-- Recall (weighted average)
-- F1-Score (weighted average)
-
-## 🎯 Prediction
-
-### Single Image Prediction
-```bash
-python predict.py
-```
-
-Make sure to update the image path in `predict.py`:
-```python
-test_image_path = "your_image.jpg"  # Replace with your image path
-```
-
-### Programmatic Usage
-```python
-from predict import predict_breed
-
-# Predict breed from image
-predicted_breed = predict_breed("path/to/image.jpg")
-print(f"Predicted breed: {predicted_breed}")
-```
+Results are saved in:
+- `saved_model/{ModelName}/optuna_cv_results.json`
+- `saved_model/{ModelName}/final_model/{ModelName}_epoch_{N}_report.txt`
 
 ## 📈 Performance
 
 ### Model Performance
-- **Validation Accuracy**: ~87.5%
-- **Training Time**: ~2-3 hours (on GPU)
-- **Inference Time**: ~100ms per image
-- **Model Size**: ~330MB
+- **Validation Accuracy**: Varies by model (typically 85-90%+)
+- **Training Time**: ~2-4 hours per model (on GPU)
+- **Inference Time**: ~50-150ms per image (model-dependent)
+- **Model Size**: 50-400MB (model-dependent)
 
 ### Supported Breeds
-The model can classify **142 different breeds** including:
-- **Dog Breeds**: Golden Retriever, German Shepherd, Labrador, Poodle, etc.
-- **Cat Breeds**: Persian, Maine Coon, British Shorthair, Siamese, etc.
+The models can classify **142 different breeds** including:
+- **Dog Breeds**: Golden Retriever, German Shepherd, Labrador, Poodle, Chihuahua, Beagle, etc.
+- **Cat Breeds**: Persian, Maine Coon, British Shorthair, Siamese, Abyssinian, Bengal, etc.
 
-### Sample Predictions
-```
-🐶 Predicted Breed: golden_retriever
-🐱 Predicted Breed: persian_cat
-```
+### Model Comparison
+Each model has been optimized with specific hyperparameters. See `Models/Models.py` for detailed configurations.
 
 ## 🛠️ Advanced Usage
 
 ### Custom Training
-Modify training parameters in `Training_Vit.py`:
+Modify training parameters in `Models/Models.py`:
 
 ```python
-training_args = TrainingArguments(
-    output_dir="./saved_model/vit_output",
-    per_device_train_batch_size=16,      # Adjust batch size
-    per_device_eval_batch_size=16,
-    num_train_epochs=5,                  # Increase epochs
-    learning_rate=2e-5,                  # Custom learning rate
-    logging_dir="./logs",
-    report_to="none"
-)
+best_configs = {
+    "ViT": {
+        "model_name": "google/vit-base-patch16-224-in21k",
+        "save_dir": "saved_model/ViT",
+        "learning_rate": 5e-5,        # Adjust learning rate
+        "batch_size": 8,              # Adjust batch size
+        "weight_decay": 0.06,
+        "mixup_alpha": 0.25,          # MixUp strength
+        "cutmix_alpha": 1.0,          # CutMix strength
+        "num_train_epochs": 12,       # Adjust epochs
+        "warmup_epochs": 4,           # Warmup phase length
+    },
+}
 ```
 
 ### Data Augmentation
-Customize data augmentation in the training pipeline:
+Customize data augmentation in `Models/optimized_V_and_E_Class_distribution.py`:
 
 ```python
-# Add more augmentation techniques
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.RandomRotation(degrees=15),
-    transforms.RandomHorizontalFlip(p=0.5),
-    transforms.RandomVerticalFlip(p=0.2),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2),
-    transforms.ToTensor(),
-])
+def get_basic_augmentation(size=(224, 224)):
+    return A.Compose([
+        A.RandomResizedCrop(size=size, scale=(0.8, 1.0)),
+        A.HorizontalFlip(p=0.5),
+        A.Rotate(limit=20, p=0.5),
+        A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.8),
+        # Add more augmentations here
+    ])
 ```
 
 ## 🐛 Troubleshooting
@@ -236,32 +232,40 @@ transform = transforms.Compose([
 ### Common Issues
 
 1. **CUDA Out of Memory**
-   - Reduce batch size in `Training_Vit.py`
-   - Use gradient accumulation
-   - Enable mixed precision training
+   - Reduce batch size in `Models/Models.py` (model configurations)
+   - Gradient accumulation is already enabled (steps=2)
+   - Mixed precision training (FP16) is enabled by default
 
 2. **Dataset Not Found**
-   - Ensure `stanford.tar` and `oxford.tar.gz` are in the project directory
+   - Ensure `stanford.tar` and `oxford.tar.gz` are in the project root
+   - Run `main.py` to extract and process datasets
    - Check file permissions and extraction paths
 
 3. **Model Loading Errors**
    - Verify `saved_model/` directory exists
    - Check `trainlabel_mapping.json` file integrity
+   - Ensure model name matches Hugging Face model identifier
+
+4. **Class Mismatch Errors**
+   - Ensure train/val/test splits have matching class structures
+   - Re-run `split.py` if classes don't match
+   - Check that all breed folders exist in all splits
 
 ### Performance Optimization
 
 1. **GPU Acceleration**
-   ```python
-   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-   model.to(device)
-   ```
+   - Automatically detected and used if available
+   - Set `CUDA_VISIBLE_DEVICES` to select specific GPU
 
-2. **Batch Processing**
-   ```python
-   # Process multiple images at once
-   batch_images = [preprocess_image(img) for img in image_paths]
-   batch_predictions = model(torch.stack(batch_images))
-   ```
+2. **Batch Size Tuning**
+   - Larger models (ViT, ConvNeXt): Use batch_size=8
+   - Medium models (Swin, ResNet50): Use batch_size=12
+   - Smaller models (ResNet18, EfficientNet): Use batch_size=16
+
+3. **Memory Management**
+   - FP16 training reduces memory by ~50%
+   - Gradient accumulation allows effective larger batch sizes
+   - CUDA cache is cleared between model runs
 
 ## 🤝 Contributing
 
@@ -290,12 +294,17 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Hugging Face** for the Transformers library
 - **Google Research** for the Vision Transformer architecture
 
+## 📚 Additional Documentation
+
+For detailed information about preprocessing techniques, augmentation strategies, and implementation details, see:
+- **[report.md](report.md)** - Comprehensive technical report on all preprocessing steps, techniques, and their advantages
+
 ## 📞 Support
 
 For questions, issues, or contributions:
 - Create an issue on GitHub
-- Contact: [your-email@domain.com]
-- Documentation: [Link to detailed docs]
+- Review the technical report (`report.md`) for implementation details
+- Check model configurations in `Models/Models.py`
 
 ---
 

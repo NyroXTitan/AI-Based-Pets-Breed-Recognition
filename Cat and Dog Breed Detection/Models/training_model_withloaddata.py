@@ -1,3 +1,4 @@
+
 import os
 import json
 import random
@@ -5,17 +6,15 @@ import numpy as np
 from PIL import Image, ImageOps
 import torch
 import torch.nn.functional as F
-from torch.utils.data import Dataset, Subset
+from torch.utils.data import Dataset
 from torchvision.datasets import ImageFolder
 from torchvision import transforms
-from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import (
     classification_report,
     confusion_matrix,
     precision_recall_fscore_support,
     accuracy_score,
 )
-
 from transformers import (
     AutoImageProcessor,
     AutoModelForImageClassification,
@@ -23,11 +22,13 @@ from transformers import (
     TrainingArguments,
     EarlyStoppingCallback,
 )
-import evaluate
-from optimized_V_and_E_Class_distribution import (
+from visualize_and_equalize_class_distribution import (
     equalize_class_distribution,
     get_basic_augmentation,
+    MixupCutmixCollator,
+    mixup_criterion,
 )
+
 ABC =""
 # ============================================================
 # 🧩 Custom Dataset
@@ -118,78 +119,22 @@ def compute_metrics(eval_pred):
 
 
 # ============================================================
-# 🧪 MixUp utilities
+# ⚙ Custom Trainer for MixUp/CutMix
 # ============================================================
-def mixup_batch(x: torch.Tensor, y: torch.Tensor, alpha: float, device=None):
-    if alpha <= 0:
-        return x, y, 1.0
-    if device is None:
-        device = x.device
-
-    lam = np.random.beta(alpha, alpha)
-    batch_size = x.size(0)
-    index = torch.randperm(batch_size).to(device)
-    mixed_x = lam * x + (1 - lam) * x[index, :]
-    return mixed_x, (y, y[index], lam)
-
-
-# ============================================================
-# 🧰 MixUp Collator
-# ============================================================
-
-class MixupCollator:
-    def __init__(self, mixup_alpha: float = 0.0, mixup_enabled: bool = False):
-        self.mixup_alpha = mixup_alpha
-        self.mixup_enabled = mixup_enabled
-
-    def __call__(self, features):
-        pixel_values = torch.stack([f["pixel_values"] for f in features])
-        labels = torch.stack([f["labels"] for f in features])
-
-        if self.mixup_enabled and self.mixup_alpha > 0:
-            mixed_x, (y_a, y_b, lam) = mixup_batch(
-                pixel_values, labels, alpha=self.mixup_alpha, device=pixel_values.device
-            )
-            batch = {
-                "pixel_values": mixed_x,
-                "y_a": y_a,
-                "y_b": y_b,
-                "lam": lam,
-                "labels": y_a,  # eval compatibility
-            }
-        else:
-            batch = {
-                "pixel_values": pixel_values,
-                "labels": labels,
-            }
-
-        return batch
-
-
-
-
-# ============================================================
-# ⚙️ Custom Trainer for MixUp
-# ============================================================
-class MixupTrainer(Trainer):
+class AugmentedTrainer(Trainer):
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         device = next(model.parameters()).device
         pixel_values = inputs.pop("pixel_values").to(device)
         labels = inputs.get("labels").to(device)
 
         if "y_a" in inputs and "y_b" in inputs and "lam" in inputs:
-            y_a, y_b, lam = inputs.pop("y_a").to(device), inputs.pop("y_b").to(device), inputs.pop("lam")
+            y_a = inputs.pop("y_a").to(device)
+            y_b = inputs.pop("y_b").to(device)
+            lam = inputs.pop("lam")
             outputs = model(pixel_values=pixel_values, labels=None)
             logits = outputs.logits
-
             num_classes = logits.size(1)
-            with torch.no_grad():
-                t_a = torch.zeros(logits.size(0), num_classes, device=device).scatter_(1, y_a.view(-1, 1), 1.0)
-                t_b = torch.zeros(logits.size(0), num_classes, device=device).scatter_(1, y_b.view(-1, 1), 1.0)
-                target = lam * t_a + (1.0 - lam) * t_b
-
-            log_probs = F.log_softmax(logits, dim=1)
-            loss = - (target * log_probs).sum(dim=1).mean()
+            loss = mixup_criterion(logits, y_a, y_b, lam, num_classes,device = device)
         else:
             outputs = model(pixel_values=pixel_values, labels=labels)
             loss = outputs.loss
@@ -203,11 +148,13 @@ class MixupTrainer(Trainer):
 # ============================================================
 def Model_with_freeze_unfreeze(
     train_dir,
+    val_dir,
     save_dir,
     model_name,
     target_count,
-    mixup_enabled,
-    default_mixup_alpha,
+    mix_augment_enabled,
+    mixup_alpha,
+    cutmix_alpha,
     num_train_epochs,
     fp16,
     metric_for_best_model,
@@ -216,19 +163,17 @@ def Model_with_freeze_unfreeze(
     batch_size,
     weight_decay,
     warmup_epochs,
+    p_mixup=0.3,
+    p_cutmix=0.7,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs(save_dir, exist_ok=True)
     torch.manual_seed(random_seed)
     np.random.seed(random_seed)
     random.seed(random_seed)
-    global ABC
-    ABC = model_name
-    global txt_num
-    txt_num *= 0
-    print(f"[INFO] model name: {ABC} {txt_num}")
+    print(f"[INFO] model name: {model_name}")
     print(f"[INFO] Using device: {device}")
-    print(f"[INFO] MixUp Enabled: {mixup_enabled}")
+
 
     processor = AutoImageProcessor.from_pretrained(model_name, use_fast=True)
 
@@ -243,36 +188,49 @@ def Model_with_freeze_unfreeze(
     print(f"Found {num_classes} classes")
 
     # ============================================================
-    # 📂 Prepare dataset + stratified split
+    # 📂 Prepare datasets
     # ============================================================
-    full_dataset = PetDataset(raw_train_eq, processor)
-    labels_for_split = [lbl for _, lbl in raw_train_eq.samples]
-
-    # Use StratifiedKFold to maintain class balance in split
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_seed)
-
-    print(f"\n🔀 Performing Stratified split (for internal validation)...")
-    train_idx, valid_idx = next(iter(skf.split(np.zeros(len(labels_for_split)), labels_for_split)))
-
-    train_subset = Subset(full_dataset, train_idx)
-    val_subset = Subset(full_dataset, valid_idx)
-    print(f"   → Training samples: {len(train_subset)}")
-    print(f"   → Validation samples: {len(val_subset)}")
+    train_dataset = PetDataset(raw_train, processor)
+    
+    # Load validation dataset from external directory
+    if not os.path.exists(val_dir):
+        raise ValueError(f"Validation directory not found: {val_dir}")
+    raw_val = ImageFolder(val_dir, transform=transforms.Resize((224, 224)))
+    
+    # Verify class mappings match between train and val
+    if raw_val.class_to_idx != raw_train.class_to_idx:
+        missing_in_train = set(raw_val.class_to_idx.keys()) - set(raw_train.class_to_idx.keys())
+        missing_in_val = set(raw_train.class_to_idx.keys()) - set(raw_val.class_to_idx.keys())
+        error_msg = "Validation and training datasets have mismatched classes:\n"
+        if missing_in_train:
+            error_msg += f"  Classes in validation but not in training: {missing_in_train}\n"
+        if missing_in_val:
+            error_msg += f"  Classes in training but not in validation: {missing_in_val}"
+        raise ValueError(error_msg)
+    
+    val_dataset = PetDataset(raw_val, processor)
+    
+    print(f"\n📂 Using external validation directory: {val_dir}")
+    print(f"   → Training samples: {len(train_dataset)}")
+    print(f"   → Validation samples: {len(val_dataset)}")
 
     # ============================================================
-    # ⚙️ Best Params (used for this single run)
+    # ⚙ Best Params (used for this single run)
     # ============================================================
     best_params = {
         "learning_rate": learning_rate,
         "batch_size": batch_size,
         "weight_decay": weight_decay,
-        "mixup_alpha": default_mixup_alpha if mixup_enabled else 0.0,
+        "mixup_alpha": mixup_alpha if mix_augment_enabled else 0.0,
+        "cutmix_alpha": cutmix_alpha if mix_augment_enabled else 0.0,
+        "p_mixup": p_mixup if mix_augment_enabled else 0.0,
+        "p_cutmix": p_cutmix if mix_augment_enabled else 0.0,
     }
 
 
     print("\n💡 Using hyperparameters:")
     for k, v in best_params.items():
-        print( {k}, {v})
+        print(f"{k}: {v}")
 
     # ============================================================
     # 🧠 Final training with two-phase fine-tuning
@@ -282,17 +240,22 @@ def Model_with_freeze_unfreeze(
         model_name,
         num_labels=num_classes,
         ignore_mismatched_sizes=True,
-        trust_remote_code=True,  # 👈 ADD THIS LINE
+        trust_remote_code=True,
     ).to(device)
 
     print("Model type:", type(final_model))
     # Print top-level attributes for debugging
     print("Top-level attributes:", [a for a in dir(final_model) if not a.startswith("_")][:80])
 
-    final_collator = MixupCollator(
+    final_collator = MixupCutmixCollator(
         mixup_alpha=best_params["mixup_alpha"],
-        mixup_enabled=mixup_enabled
+        cutmix_alpha=best_params["cutmix_alpha"],
+        p_mixup=best_params["p_mixup"],
+        p_cutmix=best_params["p_cutmix"],
+        enabled=mix_augment_enabled,
+        device=device,
     )
+
 
     # -----------------------------
     # Phase 1: Warm-up (frozen backbone)
@@ -356,10 +319,10 @@ def Model_with_freeze_unfreeze(
                                     for p in model.parameters():
                                         p.requires_grad = True
                                     print(
-                                        f"⚠️ Could not extract classifier module from attribute '{attr}'. Unfrozen all params.")
+                                        f"⚠ Could not extract classifier module from attribute '{attr}'. Unfrozen all params.")
                                     return True
                             except Exception as e:
-                                print(f"⚠️ Error while unfreezing classifier at attr '{attr}': {e}. Unfreezing all.")
+                                print(f"⚠ Error while unfreezing classifier at attr '{attr}': {e}. Unfreezing all.")
                                 for p in model.parameters():
                                     p.requires_grad = True
                                 return True
@@ -370,7 +333,7 @@ def Model_with_freeze_unfreeze(
                             print(f"Unfrozen all layers (via '{attr}')")
                             return True
                 except Exception as e:
-                    print(f"⚠️ Checking attr '{attr}' raised: {e}")
+                    print(f"⚠ Checking attr '{attr}' raised: {e}")
 
         # Last-resort: scan modules and try to detect a classifier module by heuristics
         classifier_candidates = []
@@ -402,7 +365,7 @@ def Model_with_freeze_unfreeze(
             return True
 
         # Fallback: could not find specific backbone/classifier. Inform and return False
-        print("⚠️ Could not find a known backbone/classifier to selectively freeze/unfreeze.")
+        print("⚠ Could not find a known backbone/classifier to selectively freeze/unfreeze.")
         print(f"   Model type: {type(model)}")
         print("   As a safe fallback, freezing/unfreezing all model params.")
         for p in model.parameters():
@@ -430,11 +393,11 @@ def Model_with_freeze_unfreeze(
         load_best_model_at_end=True,
     )
 
-    warmup_trainer = MixupTrainer(
+    warmup_trainer = AugmentedTrainer(
         model=final_model,
         args=warmup_args,
-        train_dataset=train_subset,
-        eval_dataset=val_subset,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
         data_collator=final_collator,
         compute_metrics=compute_metrics,
         callbacks=[
@@ -457,7 +420,7 @@ def Model_with_freeze_unfreeze(
 
     print("\n💡 Using hyperparameters:")
     for k, v in best_params.items():
-        print( {k}, {v})
+        print(f"{k}: {v}")
     finetune_epochs = num_train_epochs - warmup_epochs
     final_args = TrainingArguments(
         output_dir=os.path.join(save_dir, "final_model"),
@@ -481,11 +444,11 @@ def Model_with_freeze_unfreeze(
         dataloader_num_workers=0,
     )
 
-    final_trainer = MixupTrainer(
+    final_trainer = AugmentedTrainer(
         model=final_model,
         args=final_args,
-        train_dataset=train_subset,
-        eval_dataset=val_subset,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
         data_collator=final_collator,
         compute_metrics=compute_metrics,
         callbacks=[
